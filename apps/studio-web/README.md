@@ -30,3 +30,5 @@ npm test --workspace @hendy/studio-web
 ```
 
 Các test bao phủ thứ tự cue SRT, nội dung nhiều dòng, bỏ cue sai định dạng, đọc ASS Dialogue, định dạng timestamp và tên file đầu ra.
+
+- Audio timeline waveform: decoded locally in a bounded Web Audio workflow, summarized in a Worker, and never uploaded solely for visualization. Files above 40 MB or 10 minutes skip waveform generation; the audio can still be imported for server rendering.

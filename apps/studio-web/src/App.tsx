@@ -6,6 +6,10 @@ import { StudioWorkspace } from './components/StudioWorkspace';
 import { VideoPlayer } from './components/VideoPlayer';
 import { SubtitleList } from './components/SubtitleList';
 import { formatSrtTime, parseAss, parseSrt, parseVtt, safeFilename } from '../engine/subtitleFormats';
+import { smartMergeSubtitles } from '../engine/subtitleSmartMerge';
+import { exportAss, exportTranscript, exportVtt } from '../engine/subtitleExports';
+import { syncSubtitlesFromAudioFile } from '../engine/audioSyncEngine';
+import { buildAudioWaveform } from '../engine/audioWaveform';
 
 const VITE_ENV = (import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string; VITE_REQUIRE_AUTH?: string } }).env ?? {};
 const API_BASE = (VITE_ENV.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -32,7 +36,10 @@ const initialTracks: TimelineTrack[] = [
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageFileRef = useRef<HTMLInputElement>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [waveformByAsset, setWaveformByAsset] = useState<Record<string, number[]>>({});
+  const assetIdAlias = useRef<Record<string, string>>({});
   const [previewVideoId, setPreviewVideoId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState(readSessionToken);
@@ -66,9 +73,15 @@ export default function App() {
   const [bgmDucking, setBgmDucking] = useState(true);
   const [audioTargetTrack, setAudioTargetTrack] = useState<'track-audio'|'track-voice'|'track-tts'>('track-audio');
   const [ttsVoice, setTtsVoice] = useState('alloy');
+  const [syncAudioId, setSyncAudioId] = useState('');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [linkResult, setLinkResult] = useState<{ provider: string; title: string; author: string; sourceUrl: string; downloadsVideo: false } | null>(null);
+  const [ocrTranslateToVietnamese, setOcrTranslateToVietnamese] = useState(true);
 
   const activeSubtitle = cues.find(c => currentTime >= c.start && currentTime <= c.end) ?? cues.find(c => c.id === activeCue);
   const videoAsset = assets.find(a => a.id === previewVideoId && a.type === 'video' && a.url) ?? assets.find(a => a.type === 'video' && a.url);
+  const localAudioAssets = assets.filter(a => a.type === 'audio' && a.file && a.file.size <= 80 * 1024 * 1024);
+  const syncAudioAsset = localAudioAssets.find(a => a.id === syncAudioId) ?? localAudioAssets[0];
   const timelineScale = useMemo(() => Math.max(1, 100 / Math.max(duration, 1)), [duration]);
 
   useEffect(() => {
@@ -134,6 +147,15 @@ export default function App() {
     const localUrl = URL.createObjectURL(file);
     const temp: Asset = { id: `local-${crypto.randomUUID()}`, name: file.name, type, url: localUrl, file };
     setAssets(old => [temp, ...old]); setSelectedAsset(temp); if(type==='video') setPreviewVideoId(temp.id);
+    if (type === 'audio') {
+      void buildAudioWaveform(file).then(bars => {
+        const targetId = assetIdAlias.current[temp.id] ?? temp.id;
+        setWaveformByAsset(old => ({ ...old, [targetId]: Array.from(bars) }));
+      }).catch(error => {
+        const message = error instanceof Error ? error.message : 'không tạo được waveform';
+        setNotice(`${file.name} đã nhập; waveform chưa sẵn sàng: ${message}`);
+      });
+    }
 
     if (type === 'subtitle') {
       try {
@@ -162,6 +184,8 @@ export default function App() {
       if (response.ok) {
         const saved = await response.json();
         const uploaded: Asset = { ...temp, id: saved.assetId, url: saved.url ? apiUrl(saved.url) : localUrl };
+        assetIdAlias.current[temp.id] = saved.assetId;
+        setWaveformByAsset(old => { if (!old[temp.id]) return old; const next = { ...old, [saved.assetId]: old[temp.id] }; delete next[temp.id]; return next; });
         setAssets(old => old.map(a => a.id === temp.id ? uploaded : a));
         setTracks(old => old.map(t => ({ ...t, clips: t.clips.map(c => c.assetId === temp.id ? { ...c, assetId: saved.assetId } : c) })));
         setPreviewVideoId(old => old===temp.id ? saved.assetId : old);
@@ -249,6 +273,70 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+
+  async function inspectSourceLink() {
+    if (!sourceUrl.trim()) { setNotice('Dán liên kết YouTube, TikTok hoặc Vimeo công khai để nhập thông tin.'); return; }
+    setBusy(true); setLinkResult(null); setNotice('Đang kiểm tra metadata công khai của liên kết…');
+    try {
+      const response = await apiFetch('/api/v1/tools/inspect-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: sourceUrl.trim() }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+      setLinkResult(body); setNotice(`Đã đọc metadata ${body.provider}. Tệp video chưa được tải về.`);
+    } catch (error) { setNotice(`Không nhập được liên kết: ${error instanceof Error ? error.message : 'lỗi không xác định'}`); }
+    finally { setBusy(false); }
+  }
+
+  async function runImageOcr(file: File) {
+    if (!file.type.startsWith('image/')) { setNotice('Hãy chọn tệp ảnh PNG, JPEG hoặc WebP.'); return; }
+    setBusy(true); setNotice(ocrTranslateToVietnamese ? 'Đang nhận dạng và dịch chữ trong ảnh bằng Gemini…' : 'Đang nhận dạng chữ trong ảnh bằng Gemini…');
+    try {
+      const form = new FormData(); form.append('file', file); form.append('translateToVietnamese', String(ocrTranslateToVietnamese));
+      const response = await apiFetch('/api/v1/ai/ocr-image', { method: 'POST', body: form });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+      const text = String(body.text ?? body.translatedText ?? body.sourceText ?? '').trim();
+      if (!text) throw new Error('Ảnh không có văn bản đủ rõ để nhận dạng.');
+      const start = Math.max(0, Math.min(currentTime, Math.max(0, duration - 0.1)));
+      const end = Math.min(duration, start + Math.min(8, Math.max(2, text.length / 18)));
+      const cue: SubtitleCue = { id: `ocr-${crypto.randomUUID()}`, start, end: Math.max(start + 0.1, end), text };
+      setCues(old => [...old, cue].sort((a, b) => a.start - b.start)); setActiveCue(cue.id);
+      setNotice(`OCR hoàn tất. Đã thêm chữ ${ocrTranslateToVietnamese ? 'đã dịch sang tiếng Việt' : 'gốc'} thành cue tại ${formatTime(start)}; hãy rà lại timecode.`);
+    } catch (error) { setNotice(`OCR thất bại: ${error instanceof Error ? error.message : 'lỗi không xác định'}`); }
+    finally { setBusy(false); }
+  }
+
+  function smartMergeCurrentSubtitles() {
+    try {
+      const report = smartMergeSubtitles(cues, { maxGapMs: 400, maxDurationSec: 4.5, maxCharacters: 70, respectPunctuation: true });
+      setCues(report.cues);
+      setActiveCue(report.cues.some(cue => cue.id === activeCue) ? activeCue : report.cues[0]?.id ?? '');
+      setNotice(`Gộp phụ đề thông minh: ${report.originalCount} → ${report.resultCount} cue; đã gộp ${report.mergedCount} dòng (${report.reducedPercentage}%).`);
+    } catch (error) { setNotice(`Không thể gộp phụ đề: ${error instanceof Error ? error.message : 'lỗi không xác định'}`); }
+  }
+
+  async function autoSyncSubtitlesFromAudio() {
+    if (!cues.length) { setNotice('Chưa có phụ đề để đồng bộ.'); return; }
+    if (!syncAudioAsset?.file) { setNotice('Hãy nhập một tệp WAV/MP3/M4A vào thư viện và chọn làm nguồn đồng bộ.'); return; }
+    setBusy(true); setNotice(`Đang phân tích audio “${syncAudioAsset.name}” để tìm vùng giọng nói…`);
+    try {
+      const result = await syncSubtitlesFromAudioFile(syncAudioAsset.file, cues, { sensitivity: 'medium', leadInMs: 40, leadOutMs: 80 });
+      setCues(result.cues);
+      if (result.cues.length && !result.cues.some(cue => cue.id === activeCue)) setActiveCue(result.cues[0].id);
+      setNotice(`Đã phân tích ${result.segments.length} vùng giọng nói; tinh chỉnh ${result.changes.length}/${cues.length} cue. Hãy nghe lại để xác nhận. Audio được phân tích trong trình duyệt.`);
+    } catch (error) {
+      setNotice(`Không đồng bộ được phụ đề: ${error instanceof Error ? error.message : 'lỗi không xác định'}`);
+    } finally { setBusy(false); }
+  }
+
+  function downloadSubtitleFile(extension: 'vtt' | 'ass' | 'txt') {
+    const content = extension === 'vtt' ? exportVtt(cues)
+      : extension === 'ass' ? exportAss(cues, { fontSize, color: subtitleColor, outlineColor: '#000000', outlineWidth: 2, bold: true })
+      : exportTranscript(cues, true);
+    const mime = extension === 'vtt' ? 'text/vtt;charset=utf-8' : extension === 'ass' ? 'text/plain;charset=utf-8' : 'text/plain;charset=utf-8';
+    const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: mime }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safeFilename(projectTitle)}.${extension}`; anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNotice(`Đã xuất phụ đề ${extension.toUpperCase()}.`);
+  }
+
   async function transcribeSelected() {
     if(!selectedAsset?.file) { setNotice('Chọn lại tệp audio/video từ máy tính để bóc băng.'); return; }
     setBusy(true); setNotice('Đang gửi media đến dịch vụ nhận dạng giọng nói…');
@@ -312,9 +400,22 @@ export default function App() {
     <header className="topbar">
       <div className="brand"><div className="brand-mark"><Clapperboard size={20}/></div><div><b>HENDY <span>STUDIO</span></b><small>VIDEO EDITOR PRO</small></div></div>
       <button className="project-title" title="Đổi tên dự án" onClick={() => { const next = window.prompt('Tên dự án', projectTitle); if (next?.trim()) setProjectTitle(next.trim()); }}><span className="live-dot"/> {projectTitle} <ChevronDown size={14}/><span className="saved-label"><Check size={12}/> Workspace cục bộ</span></button>
-      <div className="top-actions"><button className="icon-button" title={authToken?'Phiên đã đăng nhập':'Đăng nhập tài khoản'} onClick={() => { if(authToken){sessionStorage.removeItem(SESSION_KEY);setAuthToken('');setNotice('Đã đăng xuất khỏi Hendy Studio.');setShowLogin(REQUIRE_AUTH);} else setShowLogin(true); }}><KeyRound size={16}/></button><button className="icon-button" title="Xuất phụ đề SRT" onClick={downloadSubtitles}><FileText size={16}/></button><button className="icon-button" title="Lưu dự án cục bộ" onClick={saveProjectLocally}><Save size={16}/></button><button className="secondary-button" onClick={() => fileRef.current?.click()}><Upload size={15}/> Nhập media</button><button className="primary-button" disabled={busy} onClick={exportManifest}><Download size={15}/>{busy ? 'Đang gửi…' : 'Xuất video'}</button><input ref={fileRef} type="file" accept="video/*,audio/*,image/*,.srt,.ass,.ssa,.vtt" hidden onChange={importFile}/></div>
+      <div className="top-actions"><button className="icon-button" title={authToken?'Phiên đã đăng nhập':'Đăng nhập tài khoản'} onClick={() => { if(authToken){sessionStorage.removeItem(SESSION_KEY);setAuthToken('');setNotice('Đã đăng xuất khỏi Hendy Studio.');setShowLogin(REQUIRE_AUTH);} else setShowLogin(true); }}><KeyRound size={16}/></button><button className="icon-button" title="Xuất phụ đề SRT" onClick={downloadSubtitles}><FileText size={16}/></button><button className="icon-button" title="Lưu dự án cục bộ" onClick={saveProjectLocally}><Save size={16}/></button><button className="secondary-button" onClick={() => fileRef.current?.click()}><Upload size={15}/> Nhập media</button><button className="primary-button" disabled={busy} onClick={exportManifest}><Download size={15}/>{busy ? 'Đang gửi…' : 'Xuất video'}</button><input ref={fileRef} type="file" accept="video/*,audio/*,image/*,.srt,.ass,.ssa,.vtt" hidden onChange={importFile}/><input ref={imageFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void runImageOcr(file); event.target.value = ''; }}/></div>
     </header>
-    <nav className="toolstrip"><button className={`tool ${activeTool === 'edit' ? 'active' : ''}`} onClick={() => setActiveTool('edit')}><Scissors size={16}/> Dựng phim</button><button className={`tool ${activeTool === 'subtitles' ? 'active' : ''}`} onClick={() => { setActiveTool('subtitles'); setInspectorTab('subtitle'); }}><Subtitles size={16}/> Phụ đề AI</button><button className={`tool ${activeTool === 'audio' ? 'active' : ''}`} onClick={() => { setActiveTool('audio'); setInspectorTab('audio'); }}><AudioLines size={16}/> Âm thanh</button><button className={`tool ${activeTool === 'ai' ? 'active' : ''}`} onClick={() => { setActiveTool('ai'); setInspectorTab('subtitle'); void translateSubtitles(); }}><WandSparkles size={16}/> Công cụ AI <span className="new-pill">BETA</span></button><div className="toolstrip-spacer"/><span className="workspace-label"><Activity size={14}/> Workspace · 1080p</span></nav>
+    <nav className="toolstrip"><button className={`tool ${activeTool === 'edit' ? 'active' : ''}`} onClick={() => setActiveTool('edit')}><Scissors size={16}/> Dựng phim</button><button className={`tool ${activeTool === 'subtitles' ? 'active' : ''}`} onClick={() => { setActiveTool('subtitles'); setInspectorTab('subtitle'); }}><Subtitles size={16}/> Phụ đề AI</button><button className={`tool ${activeTool === 'audio' ? 'active' : ''}`} onClick={() => { setActiveTool('audio'); setInspectorTab('audio'); }}><AudioLines size={16}/> Âm thanh</button><button className={`tool ${activeTool === 'ai' ? 'active' : ''}`} onClick={() => { setActiveTool(activeTool === 'ai' ? 'edit' : 'ai'); setInspectorTab('subtitle'); }}><WandSparkles size={16}/> Công cụ AI <span className="new-pill">BETA</span></button><div className="toolstrip-spacer"/><span className="workspace-label"><Activity size={14}/> Workspace · 1080p</span></nav>
+    {activeTool === 'ai' && <section className="ai-tools-panel">
+      <div className="ai-tools-heading"><div><b><Sparkles size={15}/> Công cụ mở rộng</b><span>OCR ảnh · nhập metadata video · tối ưu phụ đề · định dạng xuất</span></div><button className="small-icon" aria-label="Đóng công cụ AI" onClick={() => setActiveTool('edit')}><X size={15}/></button></div>
+      <div className="ai-tools-grid">
+        <form className="ai-link-form" onSubmit={event => { event.preventDefault(); void inspectSourceLink(); }}>
+          <label>Liên kết video công khai<input value={sourceUrl} onChange={event => setSourceUrl(event.target.value)} placeholder="https://youtu.be/... · TikTok · Vimeo" type="url"/></label>
+          <button className="secondary-button" type="submit" disabled={busy}><Link2 size={14}/> Đọc metadata</button>
+        </form>
+        <div className="ai-tool-group"><div><b>Nhận dạng chữ trong ảnh</b><small>PNG/JPEG/WebP · tối đa 15 MB</small></div><label className="ai-check"><input type="checkbox" checked={ocrTranslateToVietnamese} onChange={event => setOcrTranslateToVietnamese(event.target.checked)}/> Dịch sang tiếng Việt</label><button className="secondary-button" disabled={busy} onClick={() => imageFileRef.current?.click()}><ImageIcon size={14}/> Chọn ảnh / OCR</button></div>
+        <div className="ai-tool-group"><div><b>Tối ưu và xuất phụ đề</b><small>Gộp cue ngắn, giữ câu có dấu kết thúc và khoảng nghỉ dài.</small></div><button className="secondary-button" disabled={busy || cues.length < 2} onClick={smartMergeCurrentSubtitles}><Sparkles size={14}/> Gộp thông minh</button><div className="ai-export-row"><button className="small-export" onClick={() => downloadSubtitleFile('vtt')}>VTT</button><button className="small-export" onClick={() => downloadSubtitleFile('ass')}>ASS</button><button className="small-export" onClick={() => downloadSubtitleFile('txt')}>TXT</button><button className="small-export" onClick={downloadSubtitles}>SRT</button></div></div>
+        <div className="ai-tool-group"><div><b>Dịch phụ đề bằng Gemini</b><small>Dịch theo cue, giữ nguyên định danh và timecode.</small></div><button className="primary-button" disabled={busy || !cues.length} onClick={() => void translateSubtitles()}><Languages size={14}/> Dịch phụ đề</button></div>
+      </div>
+      {linkResult && <div className="ai-link-result"><span className="provider-chip">{linkResult.provider}</span><div><b>{linkResult.title}</b><small>{linkResult.author ? `Tác giả: ${linkResult.author} · ` : ''}Chỉ đọc metadata công khai, chưa tải video.</small><a href={linkResult.sourceUrl} target="_blank" rel="noreferrer">Mở nguồn gốc ↗</a></div><button className="small-icon" aria-label="Xóa metadata" onClick={() => setLinkResult(null)}><X size={14}/></button></div>}
+    </section>}
     <StudioWorkspace>
       <aside className="asset-panel">
         <div className="section-title"><span>THƯ VIỆN MEDIA</span><button className="small-icon" onClick={() => fileRef.current?.click()}><Plus size={15}/></button></div>
@@ -336,7 +437,7 @@ export default function App() {
           <div className="tracks-area">{tracks.map((track, idx) => <div className="track-row" key={track.id}><div className="track-label"><span className={`track-icon track-${track.kind}`}>{track.kind === 'video' ? <Film size={13}/> : track.kind === 'audio' ? <AudioLines size={13}/> : track.kind === 'subtitle' ? <Subtitles size={13}/> : <Layers3 size={13}/>}</span><span>{track.name}</span><button className="track-menu"><Menu size={12}/></button></div><div className="track-lane" onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); seekTo(((e.clientX - rect.left) / rect.width) * duration); }}>
             {track.kind === 'video' && track.clips.map(clip => <button key={clip.id} className="clip video-clip" style={{left:`${(clip.start/Math.max(duration,1))*100}%`,width:`${Math.max(5,(clip.duration/Math.max(duration,1))*100)}%`}} title={clip.name} onClick={event=>{event.stopPropagation();const asset=assets.find(a=>a.id===clip.assetId);if(asset){setSelectedAsset(asset);setPreviewVideoId(asset.id);seekTo(clip.start);}}}><span><Film size={12}/>{clip.name}</span><div className="mini-wave">{Array.from({length:18},(_,i)=><i key={i} style={{height:`${12+(i*17%28)}%`}}/>)}</div></button>)}
             {track.kind === 'subtitle' && cues.map(c => <button key={c.id} className={`clip subtitle-clip ${activeCue === c.id ? 'clip-active' : ''}`} style={{ left: `${(c.start / duration) * 100}%`, width: `${Math.max(3, ((c.end - c.start) / duration) * 100)}%` }} onClick={e => { e.stopPropagation(); setActiveCue(c.id); seekTo(c.start); }} title={c.text}>{c.text}</button>)}
-            {track.kind === 'audio' && <div className="audio-lane-note"><AudioLines size={13}/> Âm lượng {audioGain}% · ducking nền dự kiến</div>}
+            {track.kind === 'audio' && (track.clips.length ? track.clips.map(clip => { const bars = waveformByAsset[clip.assetId] ?? []; return <button type="button" key={clip.id} className="clip audio-clip" style={{ left: `${(clip.start / Math.max(duration, 1)) * 100}%`, width: `${Math.max(5, (clip.duration / Math.max(duration, 1)) * 100)}%` }} title={clip.name} onClick={event => { event.stopPropagation(); const asset = assets.find(item => item.id === clip.assetId); if (asset) setSelectedAsset(asset); seekTo(clip.start); }}><span className="audio-clip-name"><AudioLines size={11}/>{clip.name}</span><span className="audio-waveform-bars" aria-label={bars.length ? 'Dạng sóng âm thanh' : 'Đang tạo waveform'}>{(bars.length ? bars : Array.from({ length: 24 }, (_, i) => 0.18 + ((i * 13) % 50) / 100)).map((value, i) => <i key={i} style={{ height: `${Math.max(3, Math.round(value * 22))}px` }} />)}</span></button>; }) : <div className="audio-lane-note"><AudioLines size={13}/> Âm lượng {audioGain}% · ducking nền</div>)}
             {track.kind === 'overlay' && (track.clips.length ? track.clips.map(clip=><button key={clip.id} className="clip pip-clip" style={{left:`${(clip.start/Math.max(duration,1))*100}%`,width:`${Math.max(7,(clip.duration/Math.max(duration,1))*100)}%`}} onClick={event=>{event.stopPropagation();setNotice(`Đã chọn PiP: ${clip.name}`);}} title={clip.name}><Layers3 size={11}/>{clip.name}</button>) : <div className="empty-lane">Chọn media rồi thêm PiP / lớp phủ</div>)}
           </div></div>)}<div className="playhead" style={{ left: `${Math.max(0, Math.min(100, (currentTime / duration) * 100))}%` }}/></div>
           <div className="timeline-footer"><span>00:00:00:00 · 30 FPS</span><div className="zoom-controls"><button onClick={() => setDuration(d => Math.min(300, d + 10))}>+</button><span>Fit</span><button onClick={() => setDuration(d => Math.max(10, d - 10))}>−</button></div></div>
@@ -346,8 +447,8 @@ export default function App() {
         <div className="inspector-content">
           {inspectorTab === 'subtitle' && <><div className="inspector-section"><div className="subsection-title"><Subtitles size={15}/><b>Vietsub</b><button className="small-icon" onClick={addCue}><Plus size={14}/></button></div><SubtitleList cues={cues} activeCueId={activeCue} formatTime={formatTime} onSelect={cue => { setActiveCue(cue.id); seekTo(cue.start); }} /><label className="field-label">Nội dung phụ đề</label><textarea value={cues.find(c => c.id === activeCue)?.text ?? ''} onChange={e => updateCue(activeCue, { text: e.target.value })} rows={3}/><div className="field-row"><label>Vào (s)<input type="number" min="0" step="0.1" value={cues.find(c => c.id === activeCue)?.start ?? 0} onChange={e => updateCue(activeCue, { start: Math.max(0, Number(e.target.value)) })}/></label><label>Ra (s)<input type="number" min="0.1" step="0.1" value={cues.find(c => c.id === activeCue)?.end ?? 2} onChange={e => updateCue(activeCue, { end: Math.max((cues.find(c => c.id === activeCue)?.start ?? 0) + 0.1, Number(e.target.value)) })}/></label></div></div><div className="inspector-section"><div className="subsection-title"><Settings2 size={15}/><b>Kiểu chữ ASS</b></div><div className="field-row"><label>Cỡ chữ<input type="number" min="12" max="80" value={fontSize} onChange={e => setFontSize(Math.max(12, Math.min(80, Number(e.target.value))))}/></label><label>Màu chữ<div className="color-input"><input type="color" value={subtitleColor} onChange={e => setSubtitleColor(e.target.value)}/><span>{subtitleColor.toUpperCase()}</span></div></label></div><div className="style-preview" style={{ color: subtitleColor, fontSize: `${Math.max(12, Math.min(fontSize, 24))}px` }}>Vietsub mẫu</div><p className="helper">Style sẽ được chuyển thành ASS và burn-in ở bước render máy chủ.</p></div></>}
           {inspectorTab === 'video' && <div className="inspector-section"><div className="subsection-title"><Film size={15}/><b>Thuộc tính video</b></div><div className="video-property-card"><div className="property-icon"><MonitorPlay size={20}/></div><b>{videoAsset?.name ?? 'Chưa chọn video'}</b><small>{videoAsset ? 'Video đang được chọn trong timeline' : 'Nhập tệp video để bắt đầu chỉnh sửa.'}</small></div><label className="field-label">Thu phóng canvas <b className="field-value">{Math.round(zoom * 100)}%</b></label><input className="wide-range" type="range" min="0.75" max="1.5" step="0.05" value={zoom} onChange={event => setZoom(Number(event.target.value))}/><div className="field-row"><label>Khung hình<input readOnly value="1920 × 1080"/></label><label>Tốc độ khung<input readOnly value="30 FPS"/></label></div><label className="field-label">Crop / Zoom ({cropZoom.toFixed(2)}×)</label><input className="wide-range" type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={event=>setCropZoom(Number(event.target.value))}/><div className="field-row"><label>Fade / transition (s)<input type="number" min="0" max="3" step="0.1" value={transitionDuration} onChange={event=>setTransitionDuration(Math.max(0,Math.min(3,Number(event.target.value))))}/></label><label>PiP width<input type="number" min="0.1" max="0.7" step="0.05" value={pipWidth} onChange={event=>setPipWidth(Math.max(0.1,Math.min(0.7,Number(event.target.value))))}/></label></div><div className="field-row"><label>PiP X (0–1)<input type="number" min="0" max="1" step="0.05" value={pipX} onChange={event=>setPipX(Math.max(0,Math.min(1,Number(event.target.value))))}/></label><label>PiP Y (0–1)<input type="number" min="0" max="1" step="0.05" value={pipY} onChange={event=>setPipY(Math.max(0,Math.min(1,Number(event.target.value))))}/></label></div><button className="secondary-button full" onClick={addSelectedAsPip}><Layers3 size={14}/> Thêm media chọn làm PiP</button><button className="secondary-button full" onClick={addPipKeyframes}><Sparkles size={14}/> Tạo keyframe chuyển động PiP</button></div>}
-          {inspectorTab === 'audio' && <div className="inspector-section"><div className="subsection-title"><AudioLines size={15}/><b>Mixer âm thanh</b></div><label className="field-label">Đưa audio nhập mới vào track<select value={audioTargetTrack} onChange={event=>setAudioTargetTrack(event.target.value as 'track-audio'|'track-voice'|'track-tts')}><option value="track-audio">Nhạc nền / BGM</option><option value="track-voice">Voice / thoại</option><option value="track-tts">TTS / lồng tiếng</option></select></label><div className="mixer-line"><div><span>Master / Video</span><b>{audioGain}%</b></div><input type="range" min="0" max="100" value={audioGain} onChange={e => setAudioGain(Number(e.target.value))}/><div className="mixer-meter"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="audio-option"><div><b>Ducking nhạc nền</b><small>Giảm BGM khi có giọng nói / TTS.</small></div><button type="button" role="switch" aria-checked={bgmDucking} className={`toggle-switch ${bgmDucking ? 'on' : ''}`} onClick={() => setBgmDucking(value => !value)}><span/></button></div><p className="helper">Ducking được gửi trong render manifest; worker sẽ giảm BGM khi nhận dạng được track giọng nói/TTS.</p><button className="secondary-button full" disabled={busy} onClick={()=>void transcribeSelected()}><Languages size={14}/> Bóc băng media thành phụ đề</button><p className="helper">Cần WHISPER_API_URL được cấu hình ở server.</p><label className="field-label">Giọng TTS<select value={ttsVoice} onChange={event=>setTtsVoice(event.target.value)}><option value="alloy">Alloy</option><option value="nova">Nova</option><option value="echo">Echo</option><option value="fable">Fable</option><option value="onyx">Onyx</option><option value="shimmer">Shimmer</option></select></label><button className="secondary-button full" disabled={busy||!authToken||!cues.some(cue=>cue.id===activeCue&&cue.text.trim())} onClick={()=>void generateTts()}><Volume2 size={14}/> Tạo TTS cho cue đang chọn</button><p className="helper">Cần TTS_API_URL tương thích OpenAI Audio Speech; audio sẽ được thêm vào track TTS.</p></div>}
-        </div><div className="inspector-bottom">{inspectorTab === 'subtitle' && <button className="secondary-button full" disabled={busy} onClick={()=>void translateSubtitles()}><Sparkles size={15}/> Dịch / tinh chỉnh bằng Gemini</button>}{inspectorTab === 'subtitle' && <button className="secondary-button full srt-button" onClick={downloadSubtitles}><FileText size={14}/> Tải phụ đề SRT</button>}</div>
+          {inspectorTab === 'audio' && <div className="inspector-section"><div className="subsection-title"><AudioLines size={15}/><b>Mixer âm thanh</b></div><label className="field-label">Đưa audio nhập mới vào track<select value={audioTargetTrack} onChange={event=>setAudioTargetTrack(event.target.value as 'track-audio'|'track-voice'|'track-tts')}><option value="track-audio">Nhạc nền / BGM</option><option value="track-voice">Voice / thoại</option><option value="track-tts">TTS / lồng tiếng</option></select></label><div className="mixer-line"><div><span>Master / Video</span><b>{audioGain}%</b></div><input type="range" min="0" max="100" value={audioGain} onChange={e => setAudioGain(Number(e.target.value))}/><div className="mixer-meter"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="audio-option"><div><b>Ducking nhạc nền</b><small>Giảm BGM khi có giọng nói / TTS.</small></div><button type="button" role="switch" aria-checked={bgmDucking} className={`toggle-switch ${bgmDucking ? 'on' : ''}`} onClick={() => setBgmDucking(value => !value)}><span/></button></div><p className="helper">Ducking được gửi trong render manifest; worker sẽ giảm BGM khi nhận dạng được track giọng nói/TTS.</p><button className="secondary-button full" disabled={busy} onClick={()=>void transcribeSelected()}><Languages size={14}/> Bóc băng media thành phụ đề</button><p className="helper">Cần WHISPER_API_URL được cấu hình ở server.</p><label className="field-label">Nguồn audio để căn chỉnh<select value={syncAudioAsset?.id ?? ''} onChange={event=>setSyncAudioId(event.target.value)}><option value="">Chọn audio cục bộ…</option>{localAudioAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label><button className="secondary-button full" disabled={busy || !syncAudioAsset || !cues.length} onClick={()=>void autoSyncSubtitlesFromAudio()}><WandSparkles size={14}/> Tự đồng bộ mốc phụ đề</button><p className="helper">Phân tích WAV/MP3/M4A cục bộ (tối đa 80 MB), căn chỉnh khi ranh giới giọng nói gần timecode. Đây là VAD, không thay thế việc nghe kiểm tra.</p><label className="field-label">Giọng TTS<select value={ttsVoice} onChange={event=>setTtsVoice(event.target.value)}><option value="alloy">Alloy</option><option value="nova">Nova</option><option value="echo">Echo</option><option value="fable">Fable</option><option value="onyx">Onyx</option><option value="shimmer">Shimmer</option></select></label><button className="secondary-button full" disabled={busy||!authToken||!cues.some(cue=>cue.id===activeCue&&cue.text.trim())} onClick={()=>void generateTts()}><Volume2 size={14}/> Tạo TTS cho cue đang chọn</button><p className="helper">Cần TTS_API_URL tương thích OpenAI Audio Speech; audio sẽ được thêm vào track TTS.</p></div>}
+        </div><div className="inspector-bottom">{inspectorTab === 'subtitle' && <button className="secondary-button full" disabled={busy} onClick={()=>void translateSubtitles()}><Sparkles size={15}/> Dịch / tinh chỉnh bằng Gemini</button>}{inspectorTab === 'subtitle' && <button className="secondary-button full srt-button" onClick={downloadSubtitles}><FileText size={14}/> Tải phụ đề SRT</button>}{inspectorTab === 'subtitle' && <button className="secondary-button full srt-button" disabled={cues.length < 2 || busy} onClick={smartMergeCurrentSubtitles}><Sparkles size={14}/> Gộp phụ đề thông minh</button>}</div>
       </aside>
     </StudioWorkspace>
     <footer className="statusbar"><div className="status-left"><span className="status-good"><Check size={12}/></span><span>{notice}</span></div><div className="status-right"><span><Activity size={12}/> {authToken?'Authenticated session':'Local workspace'}</span><span>Hendy Pro · v1.0.0</span></div></footer>

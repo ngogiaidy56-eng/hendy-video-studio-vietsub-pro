@@ -36,7 +36,9 @@ INSERT INTO system_feature_flags(key, enabled, description) VALUES
  ('aiTranslation', true, 'Enable subtitle translation adapter'),
  ('renderQueue', true, 'Allow render job submission'),
  ('cloudflareEdge', false, 'Cloudflare Edge integration'),
- ('maintenanceMode', false, 'Maintenance banner and write guard')
+ ('maintenanceMode', false, 'Maintenance banner and write guard'),
+ ('imageOcr', true, 'OCR and Vietnamese translation from uploaded images'),
+ ('urlImporter', true, 'Inspect public video metadata via provider oEmbed APIs')
 ON CONFLICT(key) DO NOTHING;
 
 ALTER TABLE render_jobs ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';

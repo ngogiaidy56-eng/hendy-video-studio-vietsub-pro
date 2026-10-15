@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test engine/subtitleFormats.test.ts"
+    "test": "tsx --test engine/subtitleFormats.test.ts engine/subtitleSmartMerge.test.ts engine/audioSyncEngine.test.ts engine/audioWaveform.test.ts"
   },
   "dependencies": {
     "@hendy/shared-types": "*",

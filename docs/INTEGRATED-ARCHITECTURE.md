@@ -27,3 +27,17 @@ This branch combines the existing API/render starter with the requested 7-tier m
 3. Complete signed R2 uploads, retention rules, safe FFmpeg invocation and multi-track/ASS rendering.
 4. Add real Android project signing and iOS Xcode project/signing; supply GitHub Actions secrets through repository settings.
 5. Set `VITE_API_BASE_URL`, `CORS_ORIGINS`, `ADMIN_API_TOKEN`, DB and Cloudflare variables for the deployed environment. Do not commit real secret values.
+
+
+## Additional modules integrated from the uploaded source
+
+- `apps/studio-web/engine/audioSyncEngine.ts`: local audio energy-based voice activity boundaries and conservative subtitle timing suggestions.
+- `apps/studio-web/engine/subtitleSmartMerge.ts` and `subtitleExports.ts`: smart merging and VTT/ASS/transcript exports alongside SRT parsing.
+- `apps/studio-web/public/`: installable PWA shell; private API and signed media traffic are intentionally excluded from service-worker caching.
+- `services/api-gateway/src/server.ts`: Gemini image OCR/optional Vietnamese translation, public video metadata inspection using fixed oEmbed providers, and secret-token-protected basic Telegram webhook commands.
+- `integrated-pipeline/platform-v3/`: isolated Ktor/KMP platform source for Telegram Mini App, feature flags, websocket events, native playback adapters, and a pipeline console. This profile is separately built and is not deployed by root Render by default. Its legacy token-bearing bot file and unrestricted Scrapy agent were excluded.
+
+## Cloudflare deployment
+- `.github/workflows/deploy-cloudflare.yml` publishes `workers/cloudflare-edge` through Wrangler on pushes to `main`.
+- `.github/workflows/deploy-cloudflare-pages.yml` builds and deploys Admin + Studio Pages through Wrangler, while safely skipping Pages projects owned by native Cloudflare Git Builds.
+- Configure GitHub secrets/variables using `docs/CLOUDFLARE-GITHUB-DEPLOY.md`. The Edge Worker uses an exact-origin CORS allowlist and a fixed HTTPS `API_ORIGIN`.
