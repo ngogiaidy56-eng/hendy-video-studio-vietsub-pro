@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.hendy.local/project.schema.json",
+  "title": "Hendy Video Project",
+  "type": "object",
+  "required": ["projectId", "ownerId", "title", "tracks", "subtitles", "updatedAt"],
+  "properties": {
+    "projectId": {"type":"string","maxLength":128},
+    "ownerId": {"type":"string","maxLength":128},
+    "title": {"type":"string","maxLength":200},
+    "duration": {"type":"number","minimum":0},
+    "tracks": {"type":"array","maxItems":32,"items":{"type":"object","required":["id","kind","clips"],"properties":{"id":{"type":"string"},"kind":{"enum":["video","audio","subtitle","overlay"]},"clips":{"type":"array","maxItems":500,"items":{"type":"object"}}}}},
+    "subtitles": {"type":"array","maxItems":10000,"items":{"type":"object","required":["id","start","end","text"],"properties":{"id":{"type":"string"},"start":{"type":"number","minimum":0},"end":{"type":"number","exclusiveMinimum":0},"text":{"type":"string","maxLength":1000},"style":{"type":"object"}}}},
+    "updatedAt": {"type":"string","format":"date-time"},
+    "metadata": {"type":"object"}
+  },
+  "additionalProperties": false
+}

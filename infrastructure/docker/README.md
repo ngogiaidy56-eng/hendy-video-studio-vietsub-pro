@@ -1,0 +1,1 @@
+The root `Dockerfile` builds both API and worker runtime images. `docker-compose.yml` starts API, AI/render worker, Redis, PostgreSQL and an optional MongoDB profile. Production should use managed databases and secret/environment managers rather than the development credentials in Compose.

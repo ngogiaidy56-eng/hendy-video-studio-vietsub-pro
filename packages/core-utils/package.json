@@ -1,0 +1,16 @@
+{
+  "name": "@hendy/core-utils",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4"
+  }
+}

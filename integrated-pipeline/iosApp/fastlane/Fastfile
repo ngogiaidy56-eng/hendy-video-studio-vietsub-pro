@@ -1,0 +1,14 @@
+default_platform(:ios)
+platform :ios do
+  desc "Build and upload a signed IPA; configure the Xcode project and signing first"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_CONTENT"),
+      is_key_content_base64: false
+    )
+    build_app(scheme: ENV.fetch("IOS_SCHEME", "HendyVideoStudio"), export_method: "app-store")
+    # Upload is intentionally not automatic until credentials and App Store metadata are configured.
+  end
+end

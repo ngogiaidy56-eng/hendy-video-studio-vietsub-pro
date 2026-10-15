@@ -1,0 +1,1 @@
+{"manifest_version":3,"name":"Hendy Studio Link Helper","version":"0.1.0","description":"Send a page URL to a configured Hendy Studio instance.","permissions":["activeTab","storage"],"action":{"default_title":"Hendy Studio"},"background":{"service_worker":"service-worker.js"}}

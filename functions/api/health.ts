@@ -1,0 +1,1 @@
+export const onRequest: PagesFunction = async ({ env }) => Response.json({ status: 'ok', service: 'hendy-pages-edge', originConfigured: Boolean(env.API_ORIGIN), timestamp: new Date().toISOString() });

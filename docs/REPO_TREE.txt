@@ -1,0 +1,20 @@
+hendy-server-video-studio-pro/
+├── .github/workflows/        # master CI, Cloudflare Worker/Pages, native mobile builds
+├── apps/
+│   ├── admin-web/             # Tier 0: isolated Admin Control Plane
+│   ├── studio-web/            # Tier 1: React 19 Studio + reusable VideoPlayer/Subtitles
+│   ├── hendy-tools-pro/       # TypeScript/Python diagnostics + installer scaffold
+│   └── telegram-miniapp/      # Telegram Mini App integration placeholder
+├── packages/                 # shared-types, core-utils, UI, logger, database adapter
+├── integrated-pipeline/       # KMP core/Compose, Android Media3, iOS AVKit/Fastlane, desktop, Ktor starter
+├── workers/cloudflare-edge/   # Tier 3: edge gateway template
+├── services/
+│   ├── api-gateway/           # Tier 4: Express API + upload/project/render/job endpoints
+│   └── ai-worker/             # Tier 5: BullMQ / FFmpeg worker starter
+├── database/
+│   ├── postgres-rbac/         # Tier 6: RBAC, render-job and audit SQL schema
+│   └── mongo-projects/        # Tier 6: project document schema
+├── infrastructure/           # Docker, Nginx, monitoring
+├── functions/api/             # Pages API health function
+├── render.yaml                # API, Redis, PostgreSQL and separate Admin/Studio web services
+└── scripts/                   # validate architecture, clean, create/push GitHub repository
