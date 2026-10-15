@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "hendy-video-studio-edge",
   "main": "src/index.ts",
-  "compatibility_date": "2025-06-20",
+  "compatibility_date": "2026-10-15",
   "workers_dev": true,
-  "vars": { "ORIGIN_API": "https://replace-with-your-api.example.com" }
+  "vars": {}
 }

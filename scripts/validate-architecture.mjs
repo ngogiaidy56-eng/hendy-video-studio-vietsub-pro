@@ -7,6 +7,15 @@ const required = [
   'apps/studio-web/src/components/StudioHomePage.tsx',
   'apps/studio-web/src/components/VideoPlayer.tsx',
   'apps/studio-web/src/components/SubtitleList.tsx',
+  'apps/studio-web/engine/audioSyncEngine.ts',
+  'apps/studio-web/engine/audioWaveform.ts',
+  'apps/studio-web/engine/audioWaveformCore.ts',
+  'apps/studio-web/engine/audioWaveform.test.ts',
+  'apps/studio-web/workers/audioWaveWorker.ts',
+  'apps/studio-web/engine/subtitleSmartMerge.ts',
+  'apps/studio-web/engine/subtitleExports.ts',
+  'apps/studio-web/public/manifest.webmanifest',
+  'apps/studio-web/public/sw.js',
   'packages/core-utils/src/index.ts',
   'packages/shared-types/src/index.ts',
   'services/api-gateway/src/server.ts',
@@ -15,6 +24,8 @@ const required = [
   'database/postgres-rbac/001_initial.sql',
   'database/mongo-projects/project.schema.json',
   'integrated-pipeline/androidApp/build.gradle.kts',
+  'integrated-pipeline/platform-v3/server/src/main/kotlin/com/example/server/Application.kt',
+  'integrated-pipeline/platform-v3/core/src/commonMain/kotlin/com/example/core/util/SrtFormatter.kt',
   '.github/workflows/release-master.yml',
   '.github/workflows/deploy-cloudflare.yml',
   '.github/workflows/mobile-native-build.yml',
@@ -26,7 +37,7 @@ if (missing.length) {
   process.exit(1);
 }
 const envExample = readFileSync(resolve('.env.example'), 'utf8');
-if (/(GEMINI_API_KEY|TELEGRAM_BOT_TOKEN|ADMIN_API_TOKEN)=((?!change-me-in-production)[^\n]+)$/m.test(envExample)) {
+if (/(GEMINI_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_WEBHOOK_SECRET|ADMIN_API_TOKEN)=((?!change-me-in-production)[^\n]+)$/m.test(envExample)) {
   console.error('Potentially populated secret found in .env.example');
   process.exit(1);
 }
