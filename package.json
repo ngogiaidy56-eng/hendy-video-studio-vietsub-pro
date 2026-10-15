@@ -33,7 +33,14 @@
     "bootstrap:admin": "node scripts/bootstrap-admin.mjs",
     "test:render": "node --experimental-strip-types --test services/ai-worker/test/renderPlan.test.mjs",
     "test:studio-parser": "npm test --workspace @hendy/studio-web",
-    "test:render:e2e": "node scripts/run-ffmpeg-e2e.mjs"
+    "test:render:e2e": "node scripts/run-ffmpeg-e2e.mjs",
+    "validate:secrets": "node scripts/scan-secrets.mjs",
+    "validate:extras": "npm run validate:architecture && npm run validate:secrets",
+    "register:telegram-webhook": "node scripts/register-telegram-webhook.mjs",
+    "cf:validate": "npm run validate:extras && npm run typecheck --workspace @hendy/cloudflare-edge && npm run typecheck --workspace @hendy/studio-web && npm run typecheck --workspace @hendy/admin-web",
+    "cf:build": "npm run build --workspace @hendy/studio-web && npm run build --workspace @hendy/admin-web",
+    "cf:pages:create-studio": "wrangler pages project create hendy-server-video-studio-pro --production-branch=main",
+    "cf:pages:create-admin": "wrangler pages project create hendy-server-video-studio-admin --production-branch=main"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
