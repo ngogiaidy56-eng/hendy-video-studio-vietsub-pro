@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "video-subtitle-tma",
+  "pages_build_output_dir": "./build/dist/js/productionExecutable",
+  "compatibility_date": "2026-10-08",
+  "services": [
+    {
+      "binding": "API_WORKER",
+      "service": "telegram-video-editor-platform-pipeline-integrated"
+    }
+  ]
+}

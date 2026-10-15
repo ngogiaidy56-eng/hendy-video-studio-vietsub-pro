@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#101114" />
+  <title>Video Subtitle Studio</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+<div id="boot">Đang xác thực Telegram…</div>
+<script>
+  (async () => {
+    window.__API_BASE_URL__ = window.__API_BASE_URL__ || window.location.origin;
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+    const initData = tg?.initData || "";
+    if (initData) {
+      try {
+        const res = await fetch(window.__API_BASE_URL__ + "/api/auth/telegram", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData })
+        });
+        if (res.ok) {
+          const auth = await res.json();
+          window.__AUTH_TOKEN__ = auth.token;
+          window.__IS_ADMIN__ = !!auth.isAdmin;
+        } else {
+          console.error("Telegram auth rejected", await res.text());
+        }
+      } catch (e) { console.error("Telegram auth failed", e); }
+    }
+    document.getElementById("boot")?.remove();
+    const script = document.createElement("script");
+    script.src = "main.js";
+    script.defer = true;
+    document.body.appendChild(script);
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "sot_config_version": 1,
+  "endpoint": "https://api.example.com/",
+  "fontFamily": "CapCut Sans Text",
+  "colors": {
+    "--dark-background-color": "#17171a",
+    "--dark-container-background-color": "#232324",
+    "--accent-color": "#ff7a00"
+  },
+  "sot_feature_flags": {
+    "gemini": true,
+    "whisper": true,
+    "renderHardsub": true,
+    "pipeline": true
+  }
+}

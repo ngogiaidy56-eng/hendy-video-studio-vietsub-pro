@@ -1,0 +1,94 @@
+# =============================================================================
+# INTEGRATED PIPELINE: KTOR BACKEND SERVER + POSTGRESQL 16 + REDIS
+# =============================================================================
+
+name: hendy-ktor-pipeline
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pipeline_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hendy_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+      POSTGRES_DB: ${POSTGRES_DB:-hendy_vietsub_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pipeline_postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-hendy_admin} -d $${POSTGRES_DB:-hendy_vietsub_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: pipeline_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - pipeline_redis_data:/data
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pipeline_ktor_server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hendy_vietsub_db}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-hendy_vietsub_db}
+      POSTGRES_USER: ${POSTGRES_USER:-hendy_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+      REDIS_URL: redis://redis:6379
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_IDS: ${TELEGRAM_ADMIN_IDS:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      EDGE_SHARED_SECRET: ${EDGE_SHARED_SECRET:?Set EDGE_SHARED_SECRET in the environment}
+      MINI_APP_URL: ${MINI_APP_URL:-http://localhost:5173}
+      WEB_APP_URL: ${WEB_APP_URL:-http://localhost:5173}
+      CORE_BACKEND_URL: ${CORE_BACKEND_URL:-http://localhost:8080}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./server/data:/app/server/data
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pipeline_postgres_data:
+  pipeline_redis_data:
+
+networks:
+  pipeline_net:
+    driver: bridge

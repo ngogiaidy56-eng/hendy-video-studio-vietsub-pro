@@ -1,0 +1,5 @@
+/pipeline /pipeline/ 301
+/pipeline/* /pipeline/index.html 200
+/tai-app /tai-app.html 200
+/tai-app/ /tai-app.html 200
+/* /index.html 200
