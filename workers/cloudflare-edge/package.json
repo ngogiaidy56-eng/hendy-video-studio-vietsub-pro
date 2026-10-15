@@ -1,0 +1,1 @@
+{"name":"@hendy/cloudflare-edge","private":true,"type":"module","scripts":{"deploy":"wrangler deploy --config wrangler.jsonc","typecheck":"tsc --noEmit -p tsconfig.json"},"devDependencies":{"@cloudflare/workers-types":"^4.20250620.0","typescript":"^5.8.3","wrangler":"^4.20.0"}}

@@ -1,0 +1,44 @@
+{
+  "name": "hendy-server-video-studio-pro",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,studio -c blue,magenta \"npm:dev:api\" \"npm:dev:studio\"",
+    "dev:api": "npm run dev --workspace @hendy/api-gateway",
+    "dev:studio": "npm run dev --workspace @hendy/studio-web",
+    "dev:admin": "npm run dev --workspace @hendy/admin-web",
+    "dev:worker": "npm run dev --workspace @hendy/ai-worker",
+    "start:api": "npm run start --workspace @hendy/api-gateway",
+    "start:worker": "npm run start --workspace @hendy/ai-worker",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm test && npm run build",
+    "clean": "node scripts/clean.mjs",
+    "start:all": "concurrently -k -n api,worker \"npm run start:api\" \"npm run start:worker\"",
+    "dev:studio-home": "npm run dev --workspace @hendy/studio-web",
+    "dev:control-plane": "npm run dev --workspace @hendy/admin-web",
+    "validate:architecture": "node scripts/validate-architecture.mjs",
+    "db:migrate": "npm run migrate --workspace @hendy/api-gateway",
+    "bootstrap:admin": "node scripts/bootstrap-admin.mjs",
+    "test:render": "node --experimental-strip-types --test services/ai-worker/test/renderPlan.test.mjs",
+    "test:studio-parser": "npm test --workspace @hendy/studio-web",
+    "test:render:e2e": "node scripts/run-ffmpeg-e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3",
+    "tsx": "^4.19.4"
+  }
+}
